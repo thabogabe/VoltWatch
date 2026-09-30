@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 import pytest
 
@@ -14,6 +16,10 @@ def forecast(rows):
     return pd.DataFrame(rows, columns=["transformer_id", "utilization_pct"])
 
 
+def loss(gap, scale=0.12):
+    return 1 - math.exp(-gap / scale)
+
+
 def score(flag_rows, forecast_rows, **cfg):
     risk = score_transformers(flags(flag_rows), forecast(forecast_rows), RiskConfig(**cfg))
     return risk.set_index("transformer_id")
@@ -28,9 +34,19 @@ def test_healthy_transformer_is_green():
 
 def test_large_persistent_gap_is_red():
     row = score([("T1", 0.25, True, False)], [("T1", 50.0)]).loc["T1"]
-    assert row["loss_score"] == 1.0
+    assert row["loss_score"] == pytest.approx(loss(0.25))
     assert row["risk_level"] == "red"
     assert row["driver"] == "loss"
+
+
+def test_bigger_gaps_and_overloads_score_higher_without_capping():
+    risk = score(
+        [("A", 0.20, True, False), ("B", 0.30, True, False), ("C", 0.0, False, False), ("D", 0.0, False, False)],
+        [("A", 0.0), ("B", 0.0), ("C", 110.0), ("D", 130.0)],
+    )
+    assert risk.loc["A", "loss_score"] < risk.loc["B", "loss_score"] < 1.0
+    assert risk.loc["C", "overload_score"] < risk.loc["D", "overload_score"] < 1.0
+    assert risk.loc["A", "risk_score"] != risk.loc["B", "risk_score"]
 
 
 def test_same_gap_without_flag_counts_half():
@@ -38,8 +54,8 @@ def test_same_gap_without_flag_counts_half():
         [("T1", 0.10, True, False), ("T2", 0.10, False, False)],
         [("T1", 0.0), ("T2", 0.0)],
     )
-    assert risk.loc["T1", "loss_score"] == pytest.approx(0.5)
-    assert risk.loc["T2", "loss_score"] == pytest.approx(0.25)
+    assert risk.loc["T1", "loss_score"] == pytest.approx(loss(0.10))
+    assert risk.loc["T2", "loss_score"] == pytest.approx(loss(0.10) / 2)
 
 
 def test_negative_gap_scores_zero():
@@ -49,17 +65,17 @@ def test_negative_gap_scores_zero():
 
 def test_forecast_above_90_percent_is_red_without_losses():
     row = score([("T1", 0.0, False, False)], [("T1", 92.0)]).loc["T1"]
-    assert row["overload_score"] == pytest.approx(0.76)
+    assert row["overload_score"] == pytest.approx(0.7 + 0.3 * (1 - math.exp(-2 / 40)))
     assert row["risk_level"] == "red"
     assert row["driver"] == "overload"
 
 
 def test_two_moderate_problems_add_up():
-    # each alone is amber (0.5 and 0.467), together 1 - 0.5 * 0.533 = 0.733 -> red
+    # each alone is amber (0.57 and 0.47), together 1 - 0.43 * 0.53 = 0.77 -> red
     row = score([("T1", 0.10, True, False)], [("T1", 80.0)]).loc["T1"]
-    assert row["loss_score"] == pytest.approx(0.5)
+    assert row["loss_score"] == pytest.approx(loss(0.10))
     assert row["overload_score"] == pytest.approx(0.7 * 20 / 30)
-    assert row["risk_score"] == pytest.approx(1 - 0.5 * (1 - 0.7 * 20 / 30))
+    assert row["risk_score"] == pytest.approx(1 - (1 - loss(0.10)) * (1 - 0.7 * 20 / 30))
     assert row["risk_level"] == "red"
     assert row["driver"] == "both"
 
@@ -83,15 +99,15 @@ def test_overload_score_range():
         [("low", 30.0), ("full", 100.0), ("over", 170.0)],
     )
     assert risk.loc["low", "overload_score"] == 0.0
-    assert risk.loc["full", "overload_score"] == 1.0
-    assert risk.loc["over", "overload_score"] == 1.0
+    assert risk.loc["full", "overload_score"] == pytest.approx(0.7 + 0.3 * (1 - math.exp(-10 / 40)))
+    assert risk.loc["full", "overload_score"] < risk.loc["over", "overload_score"] < 1.0
 
 
 def test_weights_scale_each_signal():
     row = score(
         [("T1", 0.25, True, False)], [("T1", 0.0)], loss_weight=0.5
     ).loc["T1"]
-    assert row["risk_score"] == pytest.approx(0.5)
+    assert row["risk_score"] == pytest.approx(0.5 * loss(0.25))
     assert row["risk_level"] == "amber"
 
 

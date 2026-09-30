@@ -1,11 +1,14 @@
 """Step 6: combine loss and overload into one risk score per transformer.
 
-    loss_score      0-1  how big the unexplained gap is (step 4). A gap that is not
+    loss_score      0-1  how big the unexplained gap is (step 4): 1 - exp(-gap / 0.12),
+                         so ~6% gap -> amber, ~14% -> red, and bigger gaps keep scoring
+                         higher without ever hitting a hard cap. A gap that is not
                          persistent or anomalous only counts half, so one bad billing
                          cycle can't turn a transformer red on its own.
     overload_score  0-1  how close the forecast is to capacity (step 5).
-                         60% utilisation -> 0, 90% (step 5's at-risk line) -> 0.7
-                         (red), 100%+ -> 1, linear in between.
+                         60% utilisation -> 0, linear to 0.7 (red) at 90% (step 5's
+                         at-risk line), then rising smoothly towards 1: 100% -> 0.77,
+                         120% -> 0.86, 180% -> 0.97.
     risk_score      0-1  1 - (1 - w_loss * loss) * (1 - w_overload * overload)
 
 The combination means either problem alone can make a transformer red, and having
@@ -32,11 +35,11 @@ REQUIRED_FORECAST_COLS = {"transformer_id", "utilization_pct"}
 
 @dataclass(frozen=True)
 class RiskConfig:
-    gap_full: float = 0.20  # unexplained gap that counts as maximum loss risk
+    gap_scale: float = 0.12  # loss_score = 1 - exp(-gap / gap_scale)
     unconfirmed_gap_weight: float = 0.5  # weight of a gap with no persistent/anomaly flag
     util_start: float = 60.0  # utilisation % where overload risk starts
     util_at_risk: float = 90.0  # utilisation % that scores exactly red_at
-    util_full: float = 100.0  # utilisation % where overload risk is maximum
+    util_scale: float = 40.0  # how fast overload approaches 1 above util_at_risk
     loss_weight: float = 1.0
     overload_weight: float = 1.0
     amber_at: float = 0.4
@@ -50,16 +53,19 @@ def _check_columns(df: pd.DataFrame, required: set[str], name: str) -> None:
 
 
 def loss_score(flags: pd.DataFrame, cfg: RiskConfig) -> pd.Series:
-    gap = np.clip(flags["mean_gap"].astype(float) / cfg.gap_full, 0.0, 1.0)
+    gap = flags["mean_gap"].astype(float).clip(lower=0.0)
+    score = 1.0 - np.exp(-gap / cfg.gap_scale)
     confirmed = flags["persistent_flag"].astype(bool) | flags["anomaly_flag"].astype(bool)
-    return gap.where(confirmed, gap * cfg.unconfirmed_gap_weight)
+    return score.where(confirmed, score * cfg.unconfirmed_gap_weight)
 
 
 def overload_score(forecast: pd.DataFrame, cfg: RiskConfig) -> pd.Series:
     util = forecast["utilization_pct"].astype(float)
-    score = np.interp(
-        util, [cfg.util_start, cfg.util_at_risk, cfg.util_full], [0.0, cfg.red_at, 1.0]
+    ramp = np.interp(util, [cfg.util_start, cfg.util_at_risk], [0.0, cfg.red_at])
+    above = cfg.red_at + (1.0 - cfg.red_at) * (
+        1.0 - np.exp(-(util - cfg.util_at_risk) / cfg.util_scale)
     )
+    score = np.where(util > cfg.util_at_risk, above, ramp)
     return pd.Series(score, index=forecast.index)
 
 
