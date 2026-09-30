@@ -1,4 +1,4 @@
-import { RISK, fmtNumber, fmtPct, fmtScore } from '../constants.js'
+import { REPORT_STATUS, REPORT_TYPES, RISK, fmtNumber, fmtPct, fmtScore, timeAgo } from '../constants.js'
 import ForecastChart from './ForecastChart.jsx'
 import SuppliedBilledChart from './SuppliedBilledChart.jsx'
 
@@ -51,9 +51,10 @@ function recentUnexplained(history) {
   return values.reduce((a, b) => a + b, 0) / values.length
 }
 
-function EmptyState({ topRisk, onSelect }) {
+function EmptyState({ topRisk, onSelect, onReport }) {
   return (
     <div className="panel-body">
+      <ReportCta onReport={onReport} />
       <h2>Select a transformer</h2>
       <p className="muted">
         Click a marker on the map to see its supplied vs billed energy and its overload forecast.
@@ -79,8 +80,23 @@ function EmptyState({ topRisk, onSelect }) {
   )
 }
 
-export default function DetailPanel({ summary, detail, loading, error, topRisk, onSelect, onClose }) {
-  if (!summary) return <EmptyState topRisk={topRisk} onSelect={onSelect} />
+function ReportCta({ onReport }) {
+  if (!onReport) return null
+  return (
+    <button type="button" className="report-cta" onClick={onReport}>
+      <span>📣</span>
+      <span>
+        <strong>See a fault or cable theft?</strong>
+        <span className="muted">Report it anonymously to the community patrol</span>
+      </span>
+    </button>
+  )
+}
+
+export default function DetailPanel({
+  summary, detail, loading, error, topRisk, onSelect, onClose, onReport, onOpenReport,
+}) {
+  if (!summary) return <EmptyState topRisk={topRisk} onSelect={onSelect} onReport={onReport} />
 
   const t = detail ?? summary
   const action = ACTIONS[t.driver] ?? ACTIONS.none
@@ -121,6 +137,26 @@ export default function DetailPanel({ summary, detail, loading, error, topRisk, 
           </p>
         )}
       </section>
+
+      {detail?.community_reports?.length > 0 && (
+        <section>
+          <h3>Community reports nearby</h3>
+          <ul className="mini-reports">
+            {detail.community_reports.map((r) => (
+              <li key={r.id}>
+                <button type="button" onClick={() => onOpenReport?.(r)}>
+                  <span>{REPORT_TYPES[r.category]?.emoji}</span>
+                  <span className="mini-label">{REPORT_TYPES[r.category]?.label ?? r.category}</span>
+                  <span className="muted">{timeAgo(r.created_at)}</span>
+                  <span className="pill" style={{ background: REPORT_STATUS[r.status]?.color }}>
+                    {REPORT_STATUS[r.status]?.label}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {loading && <p className="muted">Loading history…</p>}
       {error && <p className="error">Could not load details: {error}</p>}

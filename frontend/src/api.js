@@ -19,6 +19,8 @@
  *
  * GET /summary is not needed by the map (it counts the /transformers list itself).
  *
+ * Community reports: GET /reports, POST /reports, PATCH /reports/{id} (see below).
+ *
  * Set VITE_USE_MOCK=true in frontend/.env to use built-in demo data instead.
  */
 
@@ -45,4 +47,59 @@ export function fetchTransformers() {
 
 export function fetchTransformer(id) {
   return USE_MOCK ? getMockTransformer(id) : get(`/transformers/${encodeURIComponent(id)}`)
+}
+
+async function send(method, path, body, headers = {}) {
+  const response = await fetch(`${API_URL}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`
+    try {
+      const data = await response.json()
+      if (typeof data.detail === 'string') detail = data.detail
+      else if (Array.isArray(data.detail)) detail = data.detail.map((d) => d.msg).join('; ')
+    } catch {
+      // keep the status text
+    }
+    const error = new Error(detail)
+    error.status = response.status
+    throw error
+  }
+  return response.json()
+}
+
+// --- Community reports -------------------------------------------------------
+// In mock mode reports live in memory so the flows can be tried without the API.
+const mockReports = []
+const mockCode = () =>
+  Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('')
+
+/** GET /reports -> open reports, urgent first. */
+export function fetchReports() {
+  if (USE_MOCK) return Promise.resolve(mockReports.filter((r) => r.status !== 'resolved'))
+  return get('/reports')
+}
+
+/** POST /reports { category, lat, lon, is_urgent, description? } -> report with its reference id. */
+export function submitReport(report) {
+  if (USE_MOCK) {
+    const row = { ...report, id: mockCode(), status: 'new', transformer_id: null,
+                  created_at: new Date().toISOString(), updated_at: null }
+    mockReports.unshift(row)
+    return Promise.resolve(row)
+  }
+  return send('POST', '/reports', report)
+}
+
+/** PATCH /reports/{id} { status } with the patrol code. */
+export function updateReportStatus(id, status, patrolCode) {
+  if (USE_MOCK) {
+    const row = mockReports.find((r) => r.id === id)
+    Object.assign(row, { status, updated_at: new Date().toISOString() })
+    return Promise.resolve(row)
+  }
+  return send('PATCH', `/reports/${encodeURIComponent(id)}`, { status }, { 'X-Patrol-Code': patrolCode })
 }

@@ -9,12 +9,13 @@ def ddl(table_name: str) -> str:
     return str(CreateTable(table).compile(dialect=postgresql.dialect()))
 
 
-def test_all_four_tables_defined():
+def test_all_tables_defined():
     assert set(Base.metadata.tables) == {
         "transformers",
         "customers",
         "transformer_readings",
         "billing",
+        "incident_reports",
     }
 
 

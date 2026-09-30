@@ -10,9 +10,12 @@ from gridguard.losses import monthly_balance
 
 from . import db
 from .db import get_session
-from .models import Billing, Customer, Transformer, TransformerReading
+from .models import Billing, Customer, IncidentReport, Transformer, TransformerReading
+from .reports import open_report_counts, report_out
+from .reports import router as reports_router
 
 app = FastAPI(title="VoltWatch API")
+app.include_router(reports_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,7 +49,7 @@ def load_forecast_data() -> dict[str, dict]:
     return load_by_transformer("forecast_results.csv")
 
 
-def transformer_summary(t, r: dict) -> dict:
+def transformer_summary(t, r: dict, open_reports: int = 0) -> dict:
     return {
         "id": t.id,
         "lat": float(t.lat),
@@ -59,6 +62,7 @@ def transformer_summary(t, r: dict) -> dict:
         "overload_score": r.get("overload_score") or 0.0,
         "utilization_pct": r.get("utilization_pct"),
         "driver": r.get("driver") or "none",
+        "open_reports": open_reports,
     }
 
 
@@ -144,8 +148,9 @@ def health_check():
 def get_transformers(db_session: Session = Depends(get_session)):
     """Returns all transformers with real risk scores for the frontend map."""
     risk = load_risk_data()
+    reports = open_report_counts(db_session)
     rows = db_session.execute(select(*TRANSFORMER_COLUMNS).order_by(Transformer.id)).all()
-    return [transformer_summary(t, risk.get(t.id, {})) for t in rows]
+    return [transformer_summary(t, risk.get(t.id, {}), reports.get(t.id, 0)) for t in rows]
 
 
 @app.get("/transformers/{transformer_id}")
@@ -179,8 +184,19 @@ def get_transformer(transformer_id: str, db_session: Session = Depends(get_sessi
             "at_risk": bool(f.get("at_risk")),
         }
 
+    reports = db_session.scalars(
+        select(IncidentReport)
+        .where(
+            IncidentReport.transformer_id == transformer_id,
+            IncidentReport.status != "resolved",
+        )
+        .order_by(IncidentReport.created_at.desc())
+        .limit(20)
+    ).all()
+
     return {
-        **transformer_summary(t, load_risk_data().get(transformer_id, {})),
+        **transformer_summary(t, load_risk_data().get(transformer_id, {}), len(reports)),
+        "community_reports": [report_out(r) for r in reports],
         "customer_count": customer_count,
         "indigent_count": indigent_count,
         "history": history,

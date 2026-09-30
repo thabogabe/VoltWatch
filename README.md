@@ -76,6 +76,22 @@ npm install
 npm run dev                      # http://localhost:5173
 ```
 
+## Community features
+
+- **Report a problem**: a guided chat (no AI model, so no API key or cost) where residents
+  report outages, stolen or cut cables, exposed wiring, tampering, or sparks and fire. It
+  recognises a problem typed in their own words, shows safety advice for dangerous cases
+  (SAPS 10111, 112 from a mobile), takes the location from the phone or a tap on the map,
+  and gives a reference code. Link straight to it with `/?view=report` (e.g. a QR code poster).
+- **Anonymous by design**: no names, phone numbers or addresses are collected or stored.
+- **Patrol board** (`/?view=patrol`): open reports, urgent first, for community patrol
+  officers and security. Dispatch and resolve need the shared `PATROL_CODE` (set it in
+  `backend/.env` and in Vercel; empty = updates switched off).
+- Each report is linked to the nearest transformer (within 1 km), so a transformer's detail
+  panel shows the community reports around it.
+
+API: `POST /reports`, `GET /reports`, `PATCH /reports/{id}` (header `X-Patrol-Code`).
+
 ## Deploy (Vercel)
 
 One Vercel project serves both parts: the map (`frontend/`, built to static files) and the
@@ -85,8 +101,8 @@ XGBoost and scikit-learn are too large for a function and are only needed for th
 
 1. Run the pipeline locally so `data/risk.csv` and `data/forecast_results.csv` exist
    (they are uploaded with the deploy; everything else in `data/` is not).
-2. In the Vercel project settings, add the environment variables `DATABASE_URL` and
-   `DB_SCHEMA` (same values as `backend/.env`).
+2. In the Vercel project settings, add the environment variables `DATABASE_URL`,
+   `DB_SCHEMA` and `PATROL_CODE` (same values as `backend/.env`).
 3. `npx vercel deploy --prod` from the repo root.
 
 The function runs in Paris (`cdg1`), next to the Supabase database.

@@ -9,9 +9,12 @@ class Settings(BaseSettings):
     # Optional Postgres schema to keep VoltWatch's tables (and PostGIS) separate when
     # sharing a database with another app. Empty = the default "public" schema.
     db_schema: str = ""
+    # Shared code community patrol officers enter to update report status.
+    # Empty = status updates are switched off.
+    patrol_code: str = ""
     cors_origins: str = "http://localhost:5173"
 
-    @field_validator("db_schema", "database_url")
+    @field_validator("db_schema", "database_url", "patrol_code")
     @classmethod
     def strip_pasted_value(cls, value: str) -> str:
         # Values pasted into hosting dashboards often carry spaces, newlines or quotes.

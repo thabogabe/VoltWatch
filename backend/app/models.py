@@ -1,9 +1,11 @@
-"""Data model: transformers, customers, daily transformer readings, monthly billing.
+"""Data model: transformers, customers, daily transformer readings, monthly billing,
+and anonymous community incident reports.
 
-Customers carry no personal details. All analysis is done at transformer level (POPIA).
+Customers and reporters carry no personal details. All analysis is done at transformer
+level (POPIA).
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from geoalchemy2 import Geography
@@ -12,10 +14,12 @@ from sqlalchemy import (
     CheckConstraint,
     Computed,
     Date,
+    DateTime,
     ForeignKey,
     Numeric,
     String,
     Text,
+    func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -107,3 +111,40 @@ class Billing(Base):
     kwh_billed: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
 
     customer: Mapped[Customer] = relationship(back_populates="bills")
+
+
+REPORT_CATEGORIES = ("outage", "cable_theft", "exposed_wiring", "tampering", "sparking")
+REPORT_STATUSES = ("new", "dispatched", "resolved")
+
+
+class IncidentReport(Base):
+    """A fault or crime reported by a resident. Anonymous: no name, phone or address."""
+
+    __tablename__ = "incident_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "category IN (" + ", ".join(f"'{c}'" for c in REPORT_CATEGORIES) + ")",
+            name="valid_report_category",
+        ),
+        CheckConstraint(
+            "status IN (" + ", ".join(f"'{s}'" for s in REPORT_STATUSES) + ")",
+            name="valid_report_status",
+        ),
+    )
+
+    # Short reference code shown to the resident, e.g. "K7Q2MX".
+    id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    category: Mapped[str] = mapped_column(String(24), nullable=False)
+    lat: Mapped[float] = mapped_column(Numeric(9, 6, asdecimal=False), nullable=False)
+    lon: Mapped[float] = mapped_column(Numeric(9, 6, asdecimal=False), nullable=False)
+    # Nearest transformer within 1 km, so reports show up on its detail panel.
+    transformer_id: Mapped[str | None] = mapped_column(
+        ForeignKey("transformers.id", ondelete="SET NULL"), index=True
+    )
+    is_urgent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="new", index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
