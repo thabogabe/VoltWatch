@@ -1,4 +1,4 @@
-# VoltWatch (GridGuard)
+﻿# VoltWatch (GridGuard)
 
 GridGuard compares how much power each transformer supplies with how much its registered customers are billed for. A large gap that persists over time flags the transformer as likely to have illegal connections. GridGuard also predicts which transformers are closest to overloading, so they can be dealt with before they fail.
 
@@ -65,10 +65,10 @@ npm run dev                      # http://localhost:5173
 
 1. [x] Data model (`backend/app/models.py`): transformers, customers, transformer_readings, billing
 2. [ ] Synthetic data generator with ~10% injected illegal load (ground truth)
-3. [ ] Loss calculation net of 5–8% technical loss
+3. [ ] Loss calculation net of 5â€“8% technical loss
 4. [ ] Persistent-gap flag (3+ consecutive months) and Isolation Forest vs neighbours
 5. [ ] XGBoost next-month peak forecast; >90% utilisation = at risk
-6. [ ] Combined risk score: green < 0.4, amber 0.4–0.7, red > 0.7
+6. [ ] Combined risk score: green < 0.4, amber 0.4â€“0.7, red > 0.7
 7. [ ] API: `/transformers`, `/transformers/{id}`, `/summary`
 8. [ ] Map: coloured markers, supplied vs billed chart, overload forecast
 9. [ ] Deploy
