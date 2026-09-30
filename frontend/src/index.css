@@ -1,0 +1,26 @@
+:root {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #1f2933;
+  background: #f5f7fa;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+.app { display: flex; flex-direction: column; height: 100%; }
+
+.app header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: #fff;
+  border-bottom: 1px solid #e4e7eb;
+}
+
+.app h1 { font-size: 1.1rem; margin: 0; }
+
+.status { font-size: 0.85rem; color: #616e7c; }
+
+.map { flex: 1; }
