@@ -119,6 +119,10 @@ def get_transformer(transformer_id: str, db: Session = Depends(get_db)):
 @app.get("/summary")
 def get_summary(db: Session = Depends(get_db)):
     """Returns headline metrics for the dashboard banner."""
+    total_transformers = db.query(models.Transformer).count()
+    total_customers = db.query(models.Customer).count()
+    
+    # Returns 0 as placeholders for the headline metrics listed in the README
     return {
         "total_transformers": db.query(models.Transformer).count(),
         "total_customers": db.query(models.Customer).count(),
