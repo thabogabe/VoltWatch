@@ -68,7 +68,7 @@ npm run dev                      # http://localhost:5173
 3. [x] Loss calculation net of 5–8% technical loss (`backend/gridguard/losses.py`)
 4. [ ] Persistent-gap flag (3+ consecutive months) and Isolation Forest vs neighbours
 5. [ ] XGBoost next-month peak forecast; >90% utilisation = at risk
-6. [ ] Combined risk score: green < 0.4, amber 0.4–0.7, red > 0.7
+6. [x] Combined risk score: green < 0.4, amber 0.4–0.7, red > 0.7 (`backend/gridguard/risk.py`)
 7. [ ] API: `/transformers`, `/transformers/{id}`, `/summary`
 8. [ ] Map: coloured markers, supplied vs billed chart, overload forecast
 9. [ ] Deploy
