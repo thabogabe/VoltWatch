@@ -1,18 +1,21 @@
 """Step 4 - flag persistent gaps and unusual transformers.
 
-Input (produced by step 3, one row per transformer per month):
-    losses:       transformer_id, month, unexplained_gap
-                  (unexplained_gap is a fraction: 0.06 = 6 percentage points of
-                   supplied energy that is neither billed nor explained by
-                   normal technical losses)
-    transformers: transformer_id, lat, lon   (extra columns are ignored)
+Input:
+    losses:       step 3 monthly_balance() output, one row per transformer per month:
+                  transformer_id, month, unexplained_loss_pct
+                  (a fraction: 0.06 = 6 percentage points of supplied energy that is
+                   neither billed nor explained by normal technical losses)
+    transformers: id, lat, lon   (the transformers table; extra columns are ignored)
 
 Output: one row per transformer with two independent signals and a combined flag.
 
-    1. Persistent gap  - unexplained_gap above a threshold for N or more
+    1. Persistent gap  - unexplained_loss_pct above a threshold for N or more
                          CONSECUTIVE calendar months (a missing month breaks the run).
     2. Anomaly         - Isolation Forest on per-transformer features, including how
                          the transformer compares with its nearest geographic neighbours.
+                         Only transformers losing MORE than their neighbours are flagged:
+                         an unusually low gap (billed more than supplied) is a data or
+                         metering problem, not a sign of illegal connections.
 """
 
 from __future__ import annotations
@@ -24,8 +27,8 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import BallTree
 
-REQUIRED_LOSS_COLS = {"transformer_id", "month", "unexplained_gap"}
-REQUIRED_TX_COLS = {"transformer_id", "lat", "lon"}
+REQUIRED_LOSS_COLS = {"transformer_id", "month", "unexplained_loss_pct"}
+REQUIRED_TX_COLS = {"id", "lat", "lon"}
 
 FEATURE_COLS = [
     "mean_gap",
@@ -62,12 +65,12 @@ def _monthly_matrix(losses: pd.DataFrame) -> pd.DataFrame:
 
     Months with no data stay NaN so they break a streak instead of being skipped.
     """
-    df = losses[["transformer_id", "month", "unexplained_gap"]].copy()
+    df = losses[["transformer_id", "month", "unexplained_loss_pct"]].copy()
     df["month"] = pd.to_datetime(df["month"]).dt.to_period("M")
     wide = df.pivot_table(
         index="transformer_id",
         columns="month",
-        values="unexplained_gap",
+        values="unexplained_loss_pct",
         aggfunc="mean",
     )
     full_range = pd.period_range(wide.columns.min(), wide.columns.max(), freq="M")
@@ -142,8 +145,8 @@ def flag_transformers(
 
     # ---- signal 2: Isolation Forest, compared with neighbours ---------------
     tx = (
-        transformers.drop_duplicates("transformer_id")
-        .set_index("transformer_id")
+        transformers.drop_duplicates("id")
+        .set_index("id")
         .reindex(feats.index)
     )
     if tx[["lat", "lon"]].isna().any().any():
@@ -169,7 +172,8 @@ def flag_transformers(
         score = np.zeros(len(feats))
 
     feats["anomaly_score"] = score
-    feats["anomaly_flag"] = is_outlier
+    # Unusual AND losing more than its neighbours; low-gap outliers are data problems.
+    feats["anomaly_flag"] = is_outlier & (feats["neighbour_gap_diff"].to_numpy() > 0)
 
     # ---- combine ------------------------------------------------------------
     feats["flagged"] = feats["persistent_flag"] | feats["anomaly_flag"]
