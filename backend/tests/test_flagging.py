@@ -10,7 +10,7 @@ def _transformers(n=30):
     rng = np.random.default_rng(0)
     return pd.DataFrame(
         {
-            "transformer_id": range(n),
+            "id": range(n),
             "lat": -26.25 + rng.uniform(-0.01, 0.01, n),
             "lon": 27.85 + rng.uniform(-0.01, 0.01, n),
         }
@@ -27,7 +27,7 @@ def _losses(n=30, overrides=None, drop=None):
             gap = (overrides or {}).get(tid, {}).get(i, gap)
             if (tid, i) in (drop or set()):
                 continue
-            rows.append({"transformer_id": tid, "month": m, "unexplained_gap": gap})
+            rows.append({"transformer_id": tid, "month": m, "unexplained_loss_pct": gap})
     return pd.DataFrame(rows)
 
 
@@ -84,6 +84,18 @@ def test_isolation_forest_catches_a_clear_outlier():
     assert row["flag_reason"] == "anomaly"
 
 
+def test_transformer_billed_more_than_supplied_is_not_flagged():
+    # negative gap = billed more than supplied (data error), far from its neighbours
+    overrides = {6: {i: -0.20 for i in range(12)}}
+    cfg = FlagConfig(gap_threshold=0.5, contamination=0.1)
+    flags = flag_transformers(_losses(overrides=overrides), _transformers(), cfg)
+    row = flags.set_index("transformer_id").loc[6]
+    assert row["neighbour_gap_diff"] < 0
+    assert row["anomaly_score"] > 0.9  # the forest does see it as unusual...
+    assert not row["anomaly_flag"]  # ...but it is not reported as possible theft
+    assert row["flag_reason"] == "none"
+
+
 def test_evaluate_flags():
     flags = pd.DataFrame(
         {"transformer_id": [1, 2, 3, 4], "flagged": [True, True, False, False]}
@@ -101,6 +113,6 @@ def test_bad_input_columns_raise():
     try:
         flag_transformers(bad, _transformers())
     except ValueError as e:
-        assert "unexplained_gap" in str(e)
+        assert "unexplained_loss_pct" in str(e)
     else:
         raise AssertionError("expected ValueError")
