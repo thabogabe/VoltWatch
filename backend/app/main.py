@@ -1,17 +1,22 @@
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-import pandas as pd
 from pathlib import Path
-from . import models
-from .db import get_session, engine
+
+import pandas as pd
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from gridguard.losses import monthly_balance
+
+from . import db
+from .db import get_session
+from .models import Billing, Customer, Transformer, TransformerReading
 
 app = FastAPI(title="VoltWatch API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -20,131 +25,174 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
 
-def load_risk_data():
-    """Helper to load Step 6 risk outputs into a dictionary for fast lookup."""
-    csv_path = DATA_DIR / "risk.csv"
-    if csv_path.exists():
-        df = pd.read_csv(csv_path)
-        return df.set_index('transformer_id').to_dict('index')
-    return {}
+
+def load_by_transformer(filename: str) -> dict[str, dict]:
+    """Read a pipeline output CSV (step 5/6) into {transformer_id: row}, NaN -> None."""
+    csv_path = DATA_DIR / filename
+    if not csv_path.exists():
+        return {}
+    df = pd.read_csv(csv_path)
+    df = df.astype(object).where(pd.notna(df), None)
+    return df.set_index("transformer_id").to_dict("index")
+
+
+def load_risk_data() -> dict[str, dict]:
+    """Step 6 output: risk_level, risk_score, loss_score, overload_score, driver, ..."""
+    return load_by_transformer("risk.csv")
+
+
+def load_forecast_data() -> dict[str, dict]:
+    """Step 5 output: predicted_peak_kva, utilization_pct, at_risk."""
+    return load_by_transformer("forecast_results.csv")
+
+
+def transformer_summary(t, r: dict) -> dict:
+    return {
+        "id": t.id,
+        "lat": float(t.lat),
+        "lon": float(t.lon),
+        "capacity_kva": float(t.capacity_kva),
+        "ward": t.ward,
+        "risk_level": r.get("risk_level") or "green",
+        "risk_score": r.get("risk_score") or 0.0,
+        "loss_score": r.get("loss_score") or 0.0,
+        "overload_score": r.get("overload_score") or 0.0,
+        "utilization_pct": r.get("utilization_pct"),
+        "driver": r.get("driver") or "none",
+    }
+
+
+# Explicit columns (no PostGIS geom) so the queries also run on SQLite in tests.
+TRANSFORMER_COLUMNS = (
+    Transformer.id,
+    Transformer.lat,
+    Transformer.lon,
+    Transformer.capacity_kva,
+    Transformer.ward,
+)
+
+
+def monthly_history(db_session: Session, transformer_id: str) -> list[dict]:
+    """Supplied vs billed per month (step 3) plus the monthly peak load, oldest first."""
+    conn = db_session.connection()
+    readings = pd.read_sql(
+        select(
+            TransformerReading.transformer_id,
+            TransformerReading.reading_date,
+            TransformerReading.energy_kwh,
+            TransformerReading.peak_kva,
+        ).where(TransformerReading.transformer_id == transformer_id),
+        conn,
+    )
+    if readings.empty:
+        return []
+    billing = pd.read_sql(
+        select(Billing.customer_id, Billing.billing_month, Billing.kwh_billed)
+        .join(Customer, Customer.id == Billing.customer_id)
+        .where(Customer.transformer_id == transformer_id),
+        conn,
+    )
+    customers = pd.read_sql(
+        select(Customer.id, Customer.transformer_id).where(
+            Customer.transformer_id == transformer_id
+        ),
+        conn,
+    )
+
+    readings["energy_kwh"] = readings["energy_kwh"].astype(float)
+    readings["peak_kva"] = pd.to_numeric(readings["peak_kva"], errors="coerce")
+    billing["kwh_billed"] = billing["kwh_billed"].astype(float)
+
+    balance = monthly_balance(readings, billing, customers)
+    peaks = (
+        readings.assign(
+            month=pd.to_datetime(readings["reading_date"]).dt.to_period("M").dt.to_timestamp()
+        )
+        .groupby("month")["peak_kva"]
+        .max()
+    )
+    balance["peak_kva"] = balance["month"].map(peaks)
+
+    def num(value, digits):
+        return None if pd.isna(value) else round(float(value), digits)
+
+    return [
+        {
+            "month": row.month.date().isoformat(),
+            "supplied_kwh": num(row.supplied_kwh, 2),
+            "billed_kwh": num(row.billed_kwh, 2),
+            # Fraction net of technical loss; negative means billed more than expected.
+            "unexplained_loss_pct": num(row.unexplained_loss_pct, 4),
+            "peak_kva": num(row.peak_kva, 2),
+        }
+        for row in balance.itertuples()
+    ]
+
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "message": "GridGuard API is running"}
+    return {
+        "status": "ok",
+        "message": "GridGuard API is running",
+        "database": "up" if db.ping() else "down",
+    }
+
 
 @app.get("/transformers")
-def get_transformers(db: Session = Depends(get_session)):
+def get_transformers(db_session: Session = Depends(get_session)):
     """Returns all transformers with real risk scores for the frontend map."""
-    transformers = db.query(models.Transformer).all()
-    risk_dict = load_risk_data()
-    
-    result = []
-    for t in transformers:
-        r = risk_dict.get(t.id, {})
-        result.append({
-            "id": t.id,
-            "lat": t.lat,
-            "lon": t.lon,
-            "capacity_kva": getattr(t, 'capacity_kva', 100),
-            "ward": getattr(t, 'ward', 'Soweto'),
-            "risk_level": r.get('risk_level', 'green'),
-            "risk_score": r.get('risk_score', 0.0),
-            "loss_score": r.get('loss_score', 0.0),
-            "overload_score": r.get('overload_score', 0.0),
-            "utilization_pct": r.get('utilization_pct', 0.0),
-            "driver": r.get('driver', 'none')
-        })
-    return result
+    risk = load_risk_data()
+    rows = db_session.execute(select(*TRANSFORMER_COLUMNS).order_by(Transformer.id)).all()
+    return [transformer_summary(t, risk.get(t.id, {})) for t in rows]
+
 
 @app.get("/transformers/{transformer_id}")
-def get_transformer(transformer_id: str, db: Session = Depends(get_session)):
+def get_transformer(transformer_id: str, db_session: Session = Depends(get_session)):
     """Returns detailed stats, history, and forecast for a single transformer."""
-    t = db.query(models.Transformer).filter(models.Transformer.id == transformer_id).first()
-    
+    t = db_session.execute(
+        select(*TRANSFORMER_COLUMNS).where(Transformer.id == transformer_id)
+    ).first()
     if not t:
         raise HTTPException(status_code=404, detail="Transformer not found")
-    
-    risk_dict = load_risk_data()
-    r = risk_dict.get(transformer_id, {})
-    
-    customer_count = db.query(models.Customer).filter(models.Customer.transformer_id == transformer_id).count()
-    indigent_count = db.query(models.Customer).filter(
-        models.Customer.transformer_id == transformer_id,
-        models.Customer.is_indigent == True
-    ).count()
 
-    history_query = text("""
-        SELECT 
-            TO_CHAR(r.reading_date, 'YYYY-MM') AS month,
-            SUM(r.energy_kwh) AS supplied_kwh,
-            MAX(r.peak_kva) AS peak_kva,
-            COALESCE((
-                SELECT SUM(b.kwh_billed) 
-                FROM billing b 
-                JOIN customers c ON b.customer_id = c.id 
-                WHERE c.transformer_id = :tid 
-                AND b.billing_month = DATE_TRUNC('month', r.reading_date)
-            ), 0) AS billed_kwh
-        FROM transformer_readings r
-        WHERE r.transformer_id = :tid
-        GROUP BY TO_CHAR(r.reading_date, 'YYYY-MM'), DATE_TRUNC('month', r.reading_date)
-        ORDER BY month ASC
-    """)
-    
-    history_records = db.execute(history_query, {"tid": transformer_id}).fetchall()
-    
-    history = []
-    for row in history_records:
-        supplied = float(row.supplied_kwh) if row.supplied_kwh else 0.0
-        billed = float(row.billed_kwh)
-        
-        # Step 3 fraction: Total loss fraction minus an estimated 6.5% technical loss
-        total_loss_frac = (supplied - billed) / supplied if supplied > 0 else 0.0
-        unexplained_loss_frac = max(0.0, total_loss_frac - 0.065)
-        
-        history.append({
-            "month": row.month,
-            "supplied_kwh": round(supplied, 2),
-            "billed_kwh": round(billed, 2),
-            "unexplained_loss_pct": round(unexplained_loss_frac, 4),
-            "peak_kva": round(float(row.peak_kva), 2) if row.peak_kva else 0.0
-        })
+    customer_count, indigent_count = db_session.execute(
+        select(
+            func.count(Customer.id),
+            func.count(Customer.id).filter(Customer.is_indigent.is_(True)),
+        ).where(Customer.transformer_id == transformer_id)
+    ).one()
+
+    history = monthly_history(db_session, transformer_id)
+    f = load_forecast_data().get(transformer_id)
+
+    forecast = None
+    if f is not None:
+        next_month = None
+        if history:
+            next_month = (pd.Timestamp(history[-1]["month"]) + pd.DateOffset(months=1)).date()
+        forecast = {
+            "month": next_month.isoformat() if next_month else None,
+            "predicted_peak_kva": f.get("predicted_peak_kva"),
+            "utilization_pct": f.get("utilization_pct"),
+            "at_risk": bool(f.get("at_risk")),
+        }
 
     return {
-        "id": t.id,
-        "lat": t.lat,
-        "lon": t.lon,
-        "capacity_kva": getattr(t, 'capacity_kva', 100),
-        "ward": getattr(t, 'ward', 'Soweto'),
-        "risk_level": r.get('risk_level', 'green'),
-        "risk_score": r.get('risk_score', 0.0),
-        "loss_score": r.get('loss_score', 0.0),
-        "overload_score": r.get('overload_score', 0.0),
-        "utilization_pct": r.get('utilization_pct', 0.0),
-        "driver": r.get('driver', 'none'),
+        **transformer_summary(t, load_risk_data().get(transformer_id, {})),
         "customer_count": customer_count,
         "indigent_count": indigent_count,
         "history": history,
-        "forecast": {
-            "month": "2026-09",
-            "predicted_peak_kva": r.get('predicted_peak_kva', 0.0),
-            "utilization_pct": r.get('utilization_pct', 0.0),
-            "at_risk": r.get('at_risk', False)
-        }
+        "forecast": forecast,
     }
 
+
 @app.get("/summary")
-def get_summary(db: Session = Depends(get_session)):
+def get_summary(db_session: Session = Depends(get_session)):
     """Returns headline metrics and dynamic risk counts for the dashboard banner."""
-    risk_dict = load_risk_data()
-    levels = [r.get('risk_level', 'green') for r in risk_dict.values()]
-    
+    risk = load_risk_data()
+    levels = [r.get("risk_level") for r in risk.values()]
     return {
-        "total_transformers": db.query(models.Transformer).count(),
-        "total_customers": db.query(models.Customer).count(),
-        "risk_counts": {
-            "green": levels.count('green'),
-            "amber": levels.count('amber'),
-            "red": levels.count('red')
-        }
+        "total_transformers": db_session.scalar(select(func.count(Transformer.id))),
+        "total_customers": db_session.scalar(select(func.count(Customer.id))),
+        "risk_counts": {level: levels.count(level) for level in ("green", "amber", "red")},
     }

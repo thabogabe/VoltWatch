@@ -48,10 +48,22 @@ py -m venv .venv
 .venv\Scripts\activate           # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 copy .env.example .env           # then edit DATABASE_URL if needed
-python -m app.create_tables      # create the tables (needs the database running)
-uvicorn app.main:app --reload    # http://localhost:8000/docs
 pytest
 ```
+
+Generate the data, run the analysis, load the database and start the API (from `backend/`):
+
+```powershell
+python gridguard/generate_data.py   # step 2 -> data/*.csv (takes ~40 s)
+python -m gridguard.run_flagging    # steps 3-4 -> data/flags.csv
+python gridguard/forecast.py        # step 5 -> data/forecast_results.csv
+python -m gridguard.risk            # step 6 -> data/risk.csv
+python -m app.load_data             # create tables and load data/*.csv into Postgres
+uvicorn app.main:app --reload       # http://localhost:8000/docs
+```
+
+The API reads transformers, customers, readings and billing from Postgres, and the
+risk and forecast results from `data/risk.csv` and `data/forecast_results.csv`.
 
 ### 3. Frontend
 
@@ -69,7 +81,7 @@ npm run dev                      # http://localhost:5173
 4. [x] Persistent-gap flag (3+ consecutive months) and Isolation Forest vs neighbours (`backend/gridguard/flagging.py`)
 5. [x] XGBoost next-month peak forecast; >90% utilisation = at risk (`backend/gridguard/forecast.py`)
 6. [x] Combined risk score: green < 0.4, amber 0.4–0.7, red > 0.7 (`backend/gridguard/risk.py`)
-7. [ ] API: `/transformers`, `/transformers/{id}`, `/summary`
+7. [x] API: `/transformers`, `/transformers/{id}`, `/summary` (`backend/app/main.py`, loader `backend/app/load_data.py`)
 8. [ ] Map: coloured markers, supplied vs billed chart, overload forecast
 9. [ ] Deploy
 
