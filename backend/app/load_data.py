@@ -84,10 +84,11 @@ def main() -> None:
     parser.add_argument("--data", type=Path, default=DATA_DIR, help="folder with the CSVs")
     args = parser.parse_args()
 
-    from app.db import engine  # imported here so tests can use their own engine
+    # imported here so tests can use their own engine
+    from app.create_tables import prepare_database
+    from app.db import engine
 
-    with engine.begin() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+    prepare_database(engine)
     Base.metadata.create_all(engine)
 
     counts = load_frames(engine, read_csvs(args.data))

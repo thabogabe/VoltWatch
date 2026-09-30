@@ -5,6 +5,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+psycopg://voltwatch:voltwatch@localhost:5432/voltwatch"
+    # Optional Postgres schema to keep VoltWatch's tables (and PostGIS) separate when
+    # sharing a database with another app. Empty = the default "public" schema.
+    db_schema: str = ""
     cors_origins: str = "http://localhost:5173"
 
     @property

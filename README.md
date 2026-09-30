@@ -38,7 +38,10 @@ Prerequisites: Python 3.12+, Node 20+, and either Docker Desktop or a Postgres d
 docker compose up -d db          # starts PostGIS
 ```
 
-If you use a hosted Postgres instead, run `db/init.sql` against it and put its URL in `backend/.env`.
+If you use a hosted Postgres instead (e.g. Supabase), put its URL in `backend/.env` as
+`postgresql+psycopg://...?sslmode=require`. If that database is shared with another app, also set
+`DB_SCHEMA=voltwatch`: the tables and PostGIS then go into their own schema and the other app's
+`public` schema is left untouched. Remove it all with `DROP SCHEMA voltwatch CASCADE`.
 
 ### 2. Backend
 

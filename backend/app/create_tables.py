@@ -8,9 +8,22 @@ Usage (from backend/):
 import argparse
 
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
-from app.db import engine
+from app.config import settings
 from app.models import Base
+
+
+def prepare_database(engine: Engine) -> None:
+    """Create the DB_SCHEMA schema if one is set, and enable PostGIS.
+
+    With DB_SCHEMA set, PostGIS is installed into that schema too (it is the first
+    schema on the search path), so nothing is added to the shared "public" schema.
+    """
+    with engine.begin() as conn:
+        if settings.db_schema:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{settings.db_schema}"'))
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
 
 
 def main() -> None:
@@ -18,9 +31,9 @@ def main() -> None:
     parser.add_argument("--reset", action="store_true", help="drop all tables first")
     args = parser.parse_args()
 
-    with engine.begin() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+    from app.db import engine
 
+    prepare_database(engine)
     if args.reset:
         Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
