@@ -2,12 +2,13 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+import pandas as pd
+from pathlib import Path
 from . import models
-from .db import get_db, engine
+from .db import get_session, engine
 
 app = FastAPI(title="VoltWatch API")
 
-# Allow the Vite frontend (usually http://localhost:5173) to communicate with this backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -16,49 +17,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = BASE_DIR / "data"
+
+def load_risk_data():
+    """Helper to load Step 6 risk outputs into a dictionary for fast lookup."""
+    csv_path = DATA_DIR / "risk.csv"
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+        return df.set_index('transformer_id').to_dict('index')
+    return {}
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "message": "GridGuard API is running"}
 
 @app.get("/transformers")
-def get_transformers(db: Session = Depends(get_db)):
-    """Returns all transformers with risk scores for the frontend map."""
+def get_transformers(db: Session = Depends(get_session)):
+    """Returns all transformers with real risk scores for the frontend map."""
     transformers = db.query(models.Transformer).all()
-    result = []
+    risk_dict = load_risk_data()
     
+    result = []
     for t in transformers:
+        r = risk_dict.get(t.id, {})
         result.append({
             "id": t.id,
             "lat": t.lat,
             "lon": t.lon,
             "capacity_kva": getattr(t, 'capacity_kva', 100),
             "ward": getattr(t, 'ward', 'Soweto'),
-            "risk_level": getattr(t, 'risk_level', 'green'),
-            "risk_score": getattr(t, 'risk_score', 0.0),
-            "loss_score": getattr(t, 'loss_score', 0.0),
-            "overload_score": getattr(t, 'overload_score', 0.0),
-            "utilization_pct": getattr(t, 'utilization_pct', 0.0),
-            "driver": getattr(t, 'driver', 'none')
+            "risk_level": r.get('risk_level', 'green'),
+            "risk_score": r.get('risk_score', 0.0),
+            "loss_score": r.get('loss_score', 0.0),
+            "overload_score": r.get('overload_score', 0.0),
+            "utilization_pct": r.get('utilization_pct', 0.0),
+            "driver": r.get('driver', 'none')
         })
     return result
 
 @app.get("/transformers/{transformer_id}")
-def get_transformer(transformer_id: str, db: Session = Depends(get_db)):
+def get_transformer(transformer_id: str, db: Session = Depends(get_session)):
     """Returns detailed stats, history, and forecast for a single transformer."""
     t = db.query(models.Transformer).filter(models.Transformer.id == transformer_id).first()
     
     if not t:
         raise HTTPException(status_code=404, detail="Transformer not found")
     
-    # Calculate connected customers
+    risk_dict = load_risk_data()
+    r = risk_dict.get(transformer_id, {})
+    
     customer_count = db.query(models.Customer).filter(models.Customer.transformer_id == transformer_id).count()
     indigent_count = db.query(models.Customer).filter(
         models.Customer.transformer_id == transformer_id,
         models.Customer.is_indigent == True
     ).count()
 
-    # Retrieve history using raw SQL to align with load_monthly_balance logic
-    # Groups daily readings and billing into monthly aggregates, sorted oldest first
     history_query = text("""
         SELECT 
             TO_CHAR(r.reading_date, 'YYYY-MM') AS month,
@@ -83,13 +97,16 @@ def get_transformer(transformer_id: str, db: Session = Depends(get_db)):
     for row in history_records:
         supplied = float(row.supplied_kwh) if row.supplied_kwh else 0.0
         billed = float(row.billed_kwh)
-        loss_pct = ((supplied - billed) / supplied * 100) if supplied > 0 else 0.0
+        
+        # Step 3 fraction: Total loss fraction minus an estimated 6.5% technical loss
+        total_loss_frac = (supplied - billed) / supplied if supplied > 0 else 0.0
+        unexplained_loss_frac = max(0.0, total_loss_frac - 0.065)
         
         history.append({
             "month": row.month,
             "supplied_kwh": round(supplied, 2),
             "billed_kwh": round(billed, 2),
-            "unexplained_loss_pct": round(loss_pct, 2),
+            "unexplained_loss_pct": round(unexplained_loss_frac, 4),
             "peak_kva": round(float(row.peak_kva), 2) if row.peak_kva else 0.0
         })
 
@@ -99,33 +116,35 @@ def get_transformer(transformer_id: str, db: Session = Depends(get_db)):
         "lon": t.lon,
         "capacity_kva": getattr(t, 'capacity_kva', 100),
         "ward": getattr(t, 'ward', 'Soweto'),
-        "risk_level": getattr(t, 'risk_level', 'green'),
-        "risk_score": getattr(t, 'risk_score', 0.0),
-        "loss_score": getattr(t, 'loss_score', 0.0),
-        "overload_score": getattr(t, 'overload_score', 0.0),
-        "utilization_pct": getattr(t, 'utilization_pct', 0.0),
-        "driver": getattr(t, 'driver', 'none'),
+        "risk_level": r.get('risk_level', 'green'),
+        "risk_score": r.get('risk_score', 0.0),
+        "loss_score": r.get('loss_score', 0.0),
+        "overload_score": r.get('overload_score', 0.0),
+        "utilization_pct": r.get('utilization_pct', 0.0),
+        "driver": r.get('driver', 'none'),
         "customer_count": customer_count,
         "indigent_count": indigent_count,
         "history": history,
         "forecast": {
             "month": "2026-09",
-            "predicted_peak_kva": getattr(t, 'predicted_peak_kva', 0.0),
-            "utilization_pct": getattr(t, 'next_month_utilization', 0.0),
-            "at_risk": getattr(t, 'at_risk', False)
+            "predicted_peak_kva": r.get('predicted_peak_kva', 0.0),
+            "utilization_pct": r.get('utilization_pct', 0.0),
+            "at_risk": r.get('at_risk', False)
         }
     }
 
 @app.get("/summary")
-def get_summary(db: Session = Depends(get_db)):
-    """Returns headline metrics for the dashboard banner."""
-    total_transformers = db.query(models.Transformer).count()
-    total_customers = db.query(models.Customer).count()
+def get_summary(db: Session = Depends(get_session)):
+    """Returns headline metrics and dynamic risk counts for the dashboard banner."""
+    risk_dict = load_risk_data()
+    levels = [r.get('risk_level', 'green') for r in risk_dict.values()]
     
-    # Returns 0 as placeholders for the headline metrics listed in the README
     return {
         "total_transformers": db.query(models.Transformer).count(),
         "total_customers": db.query(models.Customer).count(),
-        "households_regularised": 42, # Mock value until queue logic is built
-        "outages_avoided": 7          # Mock value until queue logic is built
+        "risk_counts": {
+            "green": levels.count('green'),
+            "amber": levels.count('amber'),
+            "red": levels.count('red')
+        }
     }
