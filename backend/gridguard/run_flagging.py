@@ -6,7 +6,7 @@ Reads the step 2 generator output from the repo-level data/ folder, builds the
 monthly losses with step 3 (monthly_balance) and writes data/flags.csv:
     data/transformers.csv, customers.csv, billing.csv, transformer_readings.csv
 
-If data/ground_truth.csv exists (transformer_id, has_illegal_load, from step 2),
+If data/ground_truth.csv exists (id, has_illegal_load, from step 2),
 precision/recall against the injected illegal load is printed as well.
 """
 
@@ -60,7 +60,7 @@ def main() -> None:
 
     truth_file = args.data / "ground_truth.csv"
     if truth_file.exists():
-        truth = pd.read_csv(truth_file)
+        truth = pd.read_csv(truth_file).rename(columns={"id": "transformer_id"})
         truth_ids = truth.loc[truth["has_illegal_load"].astype(bool), "transformer_id"]
         for col in ("persistent_flag", "anomaly_flag", "flagged"):
             print(evaluate_flags(flags, truth_ids, column=col))

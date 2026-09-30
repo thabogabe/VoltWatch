@@ -49,29 +49,42 @@ def test_negative_gap_scores_zero():
 
 def test_forecast_above_90_percent_is_red_without_losses():
     row = score([("T1", 0.0, False, False)], [("T1", 92.0)]).loc["T1"]
-    assert row["overload_score"] == pytest.approx(0.8)
+    assert row["overload_score"] == pytest.approx(0.76)
     assert row["risk_level"] == "red"
     assert row["driver"] == "overload"
 
 
 def test_two_moderate_problems_add_up():
-    # each alone is amber (0.5), together 1 - 0.5 * 0.5 = 0.75 -> red
+    # each alone is amber (0.5 and 0.467), together 1 - 0.5 * 0.533 = 0.733 -> red
     row = score([("T1", 0.10, True, False)], [("T1", 80.0)]).loc["T1"]
     assert row["loss_score"] == pytest.approx(0.5)
-    assert row["overload_score"] == pytest.approx(0.5)
-    assert row["risk_score"] == pytest.approx(0.75)
+    assert row["overload_score"] == pytest.approx(0.7 * 20 / 30)
+    assert row["risk_score"] == pytest.approx(1 - 0.5 * (1 - 0.7 * 20 / 30))
     assert row["risk_level"] == "red"
     assert row["driver"] == "both"
 
 
 def test_bucket_boundaries():
+    # amber starts at 60 + 30 * 0.4 / 0.7 = 77.14% utilisation, red at exactly 90%
+    ids = ["A", "B", "C", "D"]
     risk = score(
-        [("A", 0.0, False, False), ("B", 0.0, False, False), ("C", 0.0, False, False)],
-        [("A", 75.9), ("B", 76.0), ("C", 88.0)],  # overload 0.3975, 0.4, 0.7
+        [(i, 0.0, False, False) for i in ids],
+        [("A", 77.0), ("B", 77.2), ("C", 89.9), ("D", 90.0)],
     )
     assert risk.loc["A", "risk_level"] == "green"
     assert risk.loc["B", "risk_level"] == "amber"
-    assert risk.loc["C", "risk_level"] == "red"
+    assert risk.loc["C", "risk_level"] == "amber"
+    assert risk.loc["D", "risk_level"] == "red"
+
+
+def test_overload_score_range():
+    risk = score(
+        [("low", 0.0, False, False), ("full", 0.0, False, False), ("over", 0.0, False, False)],
+        [("low", 30.0), ("full", 100.0), ("over", 170.0)],
+    )
+    assert risk.loc["low", "overload_score"] == 0.0
+    assert risk.loc["full", "overload_score"] == 1.0
+    assert risk.loc["over", "overload_score"] == 1.0
 
 
 def test_weights_scale_each_signal():

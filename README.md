@@ -64,10 +64,10 @@ npm run dev                      # http://localhost:5173
 ## Roadmap
 
 1. [x] Data model (`backend/app/models.py`): transformers, customers, transformer_readings, billing
-2. [ ] Synthetic data generator with ~10% injected illegal load (ground truth)
+2. [x] Synthetic data generator with ~10% injected illegal load (ground truth) (`backend/gridguard/generate_data.py`)
 3. [x] Loss calculation net of 5–8% technical loss (`backend/gridguard/losses.py`)
-4. [ ] Persistent-gap flag (3+ consecutive months) and Isolation Forest vs neighbours
-5. [ ] XGBoost next-month peak forecast; >90% utilisation = at risk
+4. [x] Persistent-gap flag (3+ consecutive months) and Isolation Forest vs neighbours (`backend/gridguard/flagging.py`)
+5. [x] XGBoost next-month peak forecast; >90% utilisation = at risk (`backend/gridguard/forecast.py`)
 6. [x] Combined risk score: green < 0.4, amber 0.4–0.7, red > 0.7 (`backend/gridguard/risk.py`)
 7. [ ] API: `/transformers`, `/transformers/{id}`, `/summary`
 8. [ ] Map: coloured markers, supplied vs billed chart, overload forecast

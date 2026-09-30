@@ -4,7 +4,8 @@
                          persistent or anomalous only counts half, so one bad billing
                          cycle can't turn a transformer red on its own.
     overload_score  0-1  how close the forecast is to capacity (step 5).
-                         60% utilisation -> 0, 90% -> 0.75 (red), 100%+ -> 1.
+                         60% utilisation -> 0, 90% (step 5's at-risk line) -> 0.7
+                         (red), 100%+ -> 1, linear in between.
     risk_score      0-1  1 - (1 - w_loss * loss) * (1 - w_overload * overload)
 
 The combination means either problem alone can make a transformer red, and having
@@ -34,6 +35,7 @@ class RiskConfig:
     gap_full: float = 0.20  # unexplained gap that counts as maximum loss risk
     unconfirmed_gap_weight: float = 0.5  # weight of a gap with no persistent/anomaly flag
     util_start: float = 60.0  # utilisation % where overload risk starts
+    util_at_risk: float = 90.0  # utilisation % that scores exactly red_at
     util_full: float = 100.0  # utilisation % where overload risk is maximum
     loss_weight: float = 1.0
     overload_weight: float = 1.0
@@ -55,7 +57,10 @@ def loss_score(flags: pd.DataFrame, cfg: RiskConfig) -> pd.Series:
 
 def overload_score(forecast: pd.DataFrame, cfg: RiskConfig) -> pd.Series:
     util = forecast["utilization_pct"].astype(float)
-    return np.clip((util - cfg.util_start) / (cfg.util_full - cfg.util_start), 0.0, 1.0)
+    score = np.interp(
+        util, [cfg.util_start, cfg.util_at_risk, cfg.util_full], [0.0, cfg.red_at, 1.0]
+    )
+    return pd.Series(score, index=forecast.index)
 
 
 def risk_level(score: pd.Series, cfg: RiskConfig) -> pd.Series:
@@ -140,7 +145,7 @@ def main() -> None:
 
     truth_file = DATA_DIR / "ground_truth.csv"
     if truth_file.exists():
-        truth = pd.read_csv(truth_file)
+        truth = pd.read_csv(truth_file).rename(columns={"id": "transformer_id"})
         print(evaluate_risk(risk, truth.loc[truth["has_illegal_load"], "transformer_id"]))
     print(f"saved -> {out}")
 
