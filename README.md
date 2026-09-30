@@ -101,6 +101,6 @@ The function runs in Paris (`cdg1`), next to the Supabase database.
 6. [x] Combined risk score: green < 0.4, amber 0.4–0.7, red > 0.7 (`backend/gridguard/risk.py`)
 7. [x] API: `/transformers`, `/transformers/{id}`, `/summary` (`backend/app/main.py`, loader `backend/app/load_data.py`)
 8. [x] Map: coloured markers, supplied vs billed chart, overload forecast (`frontend/src`)
-9. [ ] Deploy
+9. [x] Deploy (Vercel: https://voltwatch-pi.vercel.app)
 
 Headline metrics: **households moved onto legal connections** and **outages avoided**.

@@ -131,10 +131,12 @@ def monthly_history(db_session: Session, transformer_id: str) -> list[dict]:
 
 @app.get("/health")
 def health_check():
+    schema = db.current_schema()
     return {
         "status": "ok",
         "message": "GridGuard API is running",
-        "database": "up" if db.ping() else "down",
+        "database": "down" if schema is None else "up",
+        "schema": schema,
     }
 
 

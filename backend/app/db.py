@@ -38,9 +38,13 @@ def get_session() -> Iterator[Session]:
 
 
 def ping() -> bool:
+    return current_schema() is not None
+
+
+def current_schema() -> str | None:
+    """Schema that unqualified table names resolve to, or None if the DB is unreachable."""
     try:
         with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return True
+            return conn.execute(text("SELECT current_schema()")).scalar() or ""
     except Exception:
-        return False
+        return None

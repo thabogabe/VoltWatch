@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +10,12 @@ class Settings(BaseSettings):
     # sharing a database with another app. Empty = the default "public" schema.
     db_schema: str = ""
     cors_origins: str = "http://localhost:5173"
+
+    @field_validator("db_schema", "database_url")
+    @classmethod
+    def strip_pasted_value(cls, value: str) -> str:
+        # Values pasted into hosting dashboards often carry spaces, newlines or quotes.
+        return value.strip().strip("\"'").strip()
 
     @property
     def cors_origin_list(self) -> list[str]:
