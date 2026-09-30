@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm install --prefix frontend",
+  "buildCommand": "cd frontend && VITE_API_URL=/api npm run build",
+  "outputDirectory": "frontend/dist",
+  "regions": ["cdg1"],
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "{backend/app/**,backend/gridguard/**,data/risk.csv,data/forecast_results.csv}",
+      "excludeFiles": "{frontend/**,backend/.venv/**,backend/tests/**}"
+    }
+  },
+  "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index" }]
+}

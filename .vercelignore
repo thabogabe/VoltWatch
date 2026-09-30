@@ -1,0 +1,14 @@
+# Never upload secrets or local environments
+.env*
+**/.env*
+.git
+backend/.venv
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/.pytest_cache
+
+# Generated data: only the two pipeline outputs the API reads are uploaded
+data/*
+!data/risk.csv
+!data/forecast_results.csv

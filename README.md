@@ -76,6 +76,21 @@ npm install
 npm run dev                      # http://localhost:5173
 ```
 
+## Deploy (Vercel)
+
+One Vercel project serves both parts: the map (`frontend/`, built to static files) and the
+API as a Python function under `/api` (`api/index.py` mounts `backend/app/main.py`).
+Config: `vercel.json`, `.vercelignore`, and the root `requirements.txt` (API packages only;
+XGBoost and scikit-learn are too large for a function and are only needed for the pipeline).
+
+1. Run the pipeline locally so `data/risk.csv` and `data/forecast_results.csv` exist
+   (they are uploaded with the deploy; everything else in `data/` is not).
+2. In the Vercel project settings, add the environment variables `DATABASE_URL` and
+   `DB_SCHEMA` (same values as `backend/.env`).
+3. `npx vercel deploy --prod` from the repo root.
+
+The function runs in Paris (`cdg1`), next to the Supabase database.
+
 ## Roadmap
 
 1. [x] Data model (`backend/app/models.py`): transformers, customers, transformer_readings, billing
@@ -85,7 +100,7 @@ npm run dev                      # http://localhost:5173
 5. [x] XGBoost next-month peak forecast; >90% utilisation = at risk (`backend/gridguard/forecast.py`)
 6. [x] Combined risk score: green < 0.4, amber 0.4–0.7, red > 0.7 (`backend/gridguard/risk.py`)
 7. [x] API: `/transformers`, `/transformers/{id}`, `/summary` (`backend/app/main.py`, loader `backend/app/load_data.py`)
-8. [ ] Map: coloured markers, supplied vs billed chart, overload forecast
+8. [x] Map: coloured markers, supplied vs billed chart, overload forecast (`frontend/src`)
 9. [ ] Deploy
 
 Headline metrics: **households moved onto legal connections** and **outages avoided**.
